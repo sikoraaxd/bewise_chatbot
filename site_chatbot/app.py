@@ -1,10 +1,7 @@
 import os
-
-from utils.sql import clear_messages
 current_directory_path = os.path.abspath(os.getcwd())
-
 import sys
-sys.path.insert(1, current_directory_path+'/utils/')
+sys.path.insert(1, os.path.join(current_directory_path, 'utils/'))
 
 try:
     __import__('pysqlite3')
@@ -21,27 +18,26 @@ import time
 import openai
 from preprocessor import get_index, roles_cleaner
 from sql import (
-    check_user_existence, 
-    create_connection, 
+    check_user_existence,
+    create_connection,
     get_message_history,
     get_user_context,
-    insert_message, 
+    insert_message,
     insert_user,
-    update_user_context
+    update_user_context,
+    clear_messages
 )
 
 import socks
 import socket
 
 
-current_directory_path = os.path.abspath(os.getcwd())
-config = dotenv_values(current_directory_path+'/.env')
-
+config = dotenv_values(os.path.join(current_directory_path, '.env'))
+DATABASE_FILE = os.path.join(current_directory_path, f"{config['DB_NAME']}")
 OPENAI_KEY = config['OPENAI_KEY']
-BOT_IMAGE_PATH = current_directory_path+'\\site_chatbot\\assets\\assistant_avatar.jpg'
+BOT_IMAGE_PATH = os.path.join(current_directory_path,'site_chatbot/assets/assistant_avatar.jpg')
 DEFAULT_CONTEXT = config['DEFAULT_CONTEXT']
-DATABASE_FILE = current_directory_path+f"\\{config['DB_NAME']}"
-socks.set_default_proxy(socks.SOCKS5, "170.83.234.177", 8000, username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
+socks.set_default_proxy(socks.SOCKS5, config['SOCKS5_IP'], int(config['SOCKS5_PORT']), username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
 socket.socket = socks.socksocket
 
 if "vectorstore" not in st.session_state:

@@ -1,8 +1,7 @@
 import os
 current_directory_path = os.path.abspath(os.getcwd())
-
 import sys
-sys.path.insert(1, current_directory_path+'/utils/')
+sys.path.insert(1, os.path.join(current_directory_path, 'utils/'))
 
 import openai
 import telebot
@@ -17,13 +16,13 @@ import socket
 
 
 
-config = dotenv_values(current_directory_path+'/.env')
+config = dotenv_values(os.path.join(current_directory_path,'.env'))
 TELEBOT_TOKEN = config['TELEBOT_TOKEN']
 OPENAI_KEY = config['OPENAI_KEY']
 bot=telebot.TeleBot(TELEBOT_TOKEN)
 DEFAULT_CONTEXT = config['DEFAULT_CONTEXT']
 
-socks.set_default_proxy(socks.SOCKS5, "170.83.234.177", 8000, username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
+socks.set_default_proxy(socks.SOCKS5, config['SOCKS5_IP'], config['SOCKS5_PORT'], username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
 socket.socket = socks.socksocket
 
 

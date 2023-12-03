@@ -3,13 +3,17 @@ import subprocess
 import argparse
 import platform
 from utils.sql import create_connection, create_tables
+from dotenv import dotenv_values
 
 if __name__ == '__main__':
-    current_directory_path = os.path.abspath(os.getcwd())
-    db_file = current_directory_path + "/chat_db.sqlite3"
+    current_directory_path = os.path.dirname(os.path.abspath(__file__))
+    config = dotenv_values(os.path.join(current_directory_path,'.env'))
+
+    db_file = os.path.join(current_directory_path,config['DB_NAME'])
     connection = create_connection(db_file)
-    create_tables(connection)
-    connection.close()
+    if connection:
+        create_tables(connection)
+        connection.close()
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--telegram', action='store_true', help='Запуск телеграма')
@@ -63,7 +67,7 @@ if __name__ == '__main__':
                             #!/bin/bash
 
                             # Выполнение команды taskkill
-                            kill -9 {elem[1]}
+                            pkill -P {elem[1]}
 
                             # Проверка кода возврата
                             if [ $? -eq 0 ]; then
