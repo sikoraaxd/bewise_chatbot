@@ -1,4 +1,6 @@
 import os
+
+from utils.sql import clear_messages
 current_directory_path = os.path.abspath(os.getcwd())
 
 import sys
@@ -95,6 +97,15 @@ def login():
     st.button('Вход', on_click=to_chat if len(login) else None, args=[login])
 
 
+def clear_history(connection, login):
+    connection = create_connection(DATABASE_FILE)
+    st.session_state['messages'] = []
+    st.session_state['memory'] = []
+    clear_messages(conn=connection,
+                   login=login)
+    connection.close()
+
+
 def chat():
     st.title("BEWISE.AI Умный ассистент")
     for message in st.session_state['messages']:
@@ -135,7 +146,6 @@ def chat():
                 user: {prompt}
                 {"Ответь на основе этого документа: " + data_extract if len(data_extract) else ''}
             '''
-            print(prompt_message)
             responce = openai.ChatCompletion.create(
                                             api_key=OPENAI_KEY, 
                                             model='gpt-3.5-turbo-1106',
@@ -194,7 +204,9 @@ def chat():
                             new_context=context)
         st.session_state['context'] = context
         connection.close()
-
+        st.button('Очистить историю сообщений', on_click=clear_history, args=[connection, st.session_state['login']])
+        
+        
 
 placeholder = st.empty()
 with placeholder:

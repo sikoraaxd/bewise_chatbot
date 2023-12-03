@@ -155,8 +155,7 @@ def insert_message(conn, login, message):
 
 
 def get_message_history(conn, login):
-    try:
-        
+    try:        
         cursor = conn.cursor()
         cursor.execute('''
             SELECT MessageHistory.message
@@ -169,3 +168,22 @@ def get_message_history(conn, login):
         return rows
     except Error as e:
         raise e
+
+
+def clear_messages(conn, login):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id FROM Users WHERE login = ?
+        ''', (login,))
+
+        user_id = cursor.fetchone()
+
+        if user_id is not None:
+            user_id = user_id[0]
+            cursor.execute('''
+                DELETE FROM MessageHistory WHERE MessageHistory.user_id = ?
+            ''', (user_id,))
+        conn.commit()
+    except Error as e:
+        print(e)
