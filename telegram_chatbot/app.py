@@ -15,14 +15,13 @@ import socks
 import socket
 
 
-
 config = dotenv_values(os.path.join(current_directory_path,'.env'))
 TELEBOT_TOKEN = config['TELEBOT_TOKEN']
 OPENAI_KEY = config['OPENAI_KEY']
 bot=telebot.TeleBot(TELEBOT_TOKEN)
 DEFAULT_CONTEXT = config['DEFAULT_CONTEXT']
 
-socks.set_default_proxy(socks.SOCKS5, config['SOCKS5_IP'], config['SOCKS5_PORT'], username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
+socks.set_default_proxy(socks.SOCKS5, config['SOCKS5_IP'], int(config['SOCKS5_PORT']), username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
 socket.socket = socks.socksocket
 
 
