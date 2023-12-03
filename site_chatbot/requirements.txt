@@ -1,0 +1,12 @@
+docx==0.2.4
+langchain==0.0.340
+moviepy==1.0.3
+openai==0.28.0
+tiktoken==0.5.1
+pydub==0.25.1
+PyPDF2==3.0.1
+python_docx==1.1.0
+streamlit==1.28.1
+vosk==0.3.42
+pysqlite3-binary
+chromadb==0.4.0
