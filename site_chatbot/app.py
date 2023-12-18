@@ -3,20 +3,20 @@ current_directory_path = os.path.abspath(os.getcwd())
 import sys
 sys.path.insert(1, os.path.join(current_directory_path, 'utils/'))
 
-try:
-    __import__('pysqlite3')
-    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-except:
-    pass
-
 import json
 import streamlit as st
 from dotenv import dotenv_values
 
 import time
-
-import openai
-from preprocessor import get_index, roles_cleaner
+from preprocessor import (
+    load_documents,
+    get_vectorstore,
+    retrieve,
+    roles_cleaner, 
+    convert_history_to_memory,
+    save_files,
+    clear_files
+)
 from sql import (
     check_user_existence,
     create_connection,
@@ -28,16 +28,19 @@ from sql import (
     clear_messages
 )
 
+from langchain.chat_models import ChatOpenAI
+from langchain.chains.question_answering import load_qa_chain
+from langchain.memory import ConversationBufferWindowMemory
+
 import socks
 import socket
 
 
-config = dotenv_values(os.path.join(current_directory_path, '.env'))
-DATABASE_FILE = os.path.join(current_directory_path, f"{config['DB_NAME']}")
-OPENAI_KEY = config['OPENAI_KEY']
+CONFIG = dotenv_values(os.path.join(current_directory_path, '.env'))
+OPENAI_KEY = CONFIG['OPENAI_KEY']
 BOT_IMAGE_PATH = os.path.join(current_directory_path,'site_chatbot/assets/assistant_avatar.jpg')
-DEFAULT_CONTEXT = config['DEFAULT_CONTEXT']
-socks.set_default_proxy(socks.SOCKS5, config['SOCKS5_IP'], int(config['SOCKS5_PORT']), username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
+DEFAULT_CONTEXT = CONFIG['DEFAULT_CONTEXT']
+socks.set_default_proxy(socks.SOCKS5, CONFIG['SOCKS5_IP'], int(CONFIG['SOCKS5_PORT']), username=CONFIG['SOCKS5_USERNAME'], password=CONFIG['SOCKS5_PASSWORD'])
 socket.socket = socks.socksocket
 
 if "vectorstore" not in st.session_state:
@@ -47,7 +50,7 @@ if "last_uploaded_files" not in st.session_state:
     st.session_state['last_uploaded_files'] = None
 
 if "memory" not in st.session_state:
-    st.session_state['memory'] = None
+    st.session_state['memory'] = ConversationBufferWindowMemory(k=20)
 
 if "messages" not in st.session_state:
     st.session_state['messages'] = None
@@ -61,27 +64,52 @@ if "login" not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state['page'] = 1
 
+if 'model' not in st.session_state:
+    st.session_state['model'] = load_qa_chain(
+        ChatOpenAI(model='gpt-3.5-turbo-1106',
+                   openai_api_key=CONFIG['OPENAI_KEY'],
+                   temperature=0.8), 
+        chain_type='stuff'
+    )
 
 def to_chat(login):
     placeholder.empty()
-    connection = create_connection(DATABASE_FILE)
-    user_exist = check_user_existence(conn=connection, login=login)
+    connection = create_connection()
+    user_exist = check_user_existence(
+        conn=connection, 
+        login=login
+    )
     history = []
+
     if not user_exist:
-        insert_user(connection, login, DEFAULT_CONTEXT, '[]')
+        insert_user(connection, login, DEFAULT_CONTEXT)
     else:
-        history = get_message_history(conn=connection, login=login)
+        history = get_message_history(
+            conn=connection, 
+            login=login
+        )
         history = [json.loads(elem[0]) for elem in history]
-        st.session_state['vectorstore'] = get_index(files=None, 
-                                                    login=login, 
-                                                    connection=connection, 
-                                                    openai_api_key=OPENAI_KEY,
-                                                    from_stored_data=True)
-        context = get_user_context(conn=connection, 
-                                   login=login)[0]
+        context = get_user_context(
+            conn=connection, 
+            login=login
+        )[0]
         st.session_state['context'] = context
     connection.close()
-    st.session_state['memory'] = history.copy()
+
+    data_path = os.path.join(current_directory_path, 'data', login)
+    if login not in os.listdir(os.path.join(current_directory_path, 'data')):
+        os.mkdir(data_path)
+
+    docs = load_documents(data_path)
+    try:
+        vectorstore = get_vectorstore(
+            documents=docs, 
+            openai_api_key=CONFIG['OPENAI_KEY']
+        )
+    except:
+        vectorstore = None
+    st.session_state['vectorstore'] = vectorstore
+    st.session_state['memory'] = convert_history_to_memory(history, st.session_state['memory'])
     st.session_state['messages'] = history.copy()
     st.session_state['login'] = login
     st.session_state['page'] += 1
@@ -94,9 +122,9 @@ def login():
 
 
 def clear_history(connection, login):
-    connection = create_connection(DATABASE_FILE)
+    connection = create_connection()
     st.session_state['messages'] = []
-    st.session_state['memory'] = []
+    st.session_state['memory'] = ConversationBufferWindowMemory(k=20)
     clear_messages(conn=connection,
                    login=login)
     connection.close()
@@ -104,12 +132,13 @@ def clear_history(connection, login):
 
 def chat():
     st.title("BEWISE.AI Умный ассистент")
+    
     for message in st.session_state['messages']:
         with st.chat_message(message["role"], avatar= BOT_IMAGE_PATH if message['role'] == 'assistant' else None):
             st.markdown(message["text"])
 
     if prompt := st.chat_input("Прикрепите файлы и начните диалог!"):
-        connection = create_connection(DATABASE_FILE)
+        connection = create_connection()
         message_object = {
                 'role':'user',
                 'text': prompt
@@ -123,78 +152,67 @@ def chat():
             full_response = ""
             vectorstore = st.session_state.get("vectorstore")
             memory = st.session_state.get("memory")
-            data_extract = ''
-            if vectorstore is not None:
-                search_results = vectorstore.similarity_search(prompt, k=3)
-                data_extract = "/n ".join([result.page_content for result in search_results])
-            
-            memory.append(message_object)
+            retrieved = retrieve(
+                query=prompt,
+                vectorstore=vectorstore,
+                memory=memory,
+                context=st.session_state.get('context', CONFIG['DEFAULT_CONTEXT'])
+            )
             insert_message(conn=connection,
                         login=st.session_state['login'],
                         message=json.dumps(message_object)
             )
-            #Составляем сообщение боту
-            prompt_message = st.session_state['context']
-            for elem in memory[-20:-1]:
-                prompt_message += f'{elem["role"]}: {elem["text"]}\n'
+
+            model = st.session_state['model']
             
-            prompt_message += f'''
-                user: {prompt}
-                {"Ответь на основе этого документа: " + data_extract if len(data_extract) else ''}
-            '''
-            responce = openai.ChatCompletion.create(
-                                            api_key=OPENAI_KEY, 
-                                            model='gpt-3.5-turbo-1106',
-                                            temperature=0.7, 
-                                            messages=[{
-                                                'role': 'user',
-                                                'content': prompt_message
-                                            }])
-            
-            assistant_response = responce['choices'][0]['message']['content']
-            assistant_response = roles_cleaner(assistant_response)
+            assistant_response = model.run(
+                input_documents=retrieved,
+                question=prompt
+            )
+            memory.save_context({'input': prompt}, {'output': assistant_response})
 
             message_object = {
                 'role':'assistant',
                 'text': assistant_response
             }
-            memory.append(message_object)
             insert_message(conn=connection,
                         login=st.session_state['login'],
                         message=json.dumps(message_object)
             )
 
             st.session_state['memory'] = memory
-
-            for chunk in assistant_response.split():
-                full_response += chunk + " "
-                time.sleep(0.05)
+            for chunk in list(assistant_response):
+                full_response += chunk
+                time.sleep(0.01)
                 message_placeholder.markdown(full_response + "▌")
-            message_placeholder.markdown(full_response)
-        st.session_state['messages'].append({"role": "assistant", "text": full_response})
+            message_placeholder.markdown(assistant_response)
+        st.session_state['messages'].append({"role": "assistant", "text": assistant_response})
 
     with st.sidebar:
         uploaded_files = st.file_uploader("Выберите файл", accept_multiple_files=True)
         last_uploaded_files = st.session_state.get("last_uploaded_files")
-        connection = create_connection(DATABASE_FILE)
+        connection = create_connection()
+
+        login = st.session_state['login']
+        data_path = os.path.join(current_directory_path, 'data', login)
         if uploaded_files and last_uploaded_files != uploaded_files:
-            st.session_state['last_uploaded_files'] = uploaded_files
-            vectorstore =  st.session_state.get("vectorstore")
-            if vectorstore is not None:
-                for id in vectorstore._collection.get()['ids']:
-                    vectorstore._collection.delete(id)
             
-            st.session_state['vectorstore'] = get_index(uploaded_files, 
-                                                        login=st.session_state['login'], 
-                                                        connection=connection, 
-                                                        openai_api_key=OPENAI_KEY)
-            st.session_state['memory'] = []
+            st.session_state['last_uploaded_files'] = uploaded_files
+            clear_files(data_path)
+            save_files(
+                files=uploaded_files,
+                data_path=data_path
+            )
+
+            docs = load_documents(data_path)
+            vectorstore = get_vectorstore(
+                documents=docs, 
+                openai_api_key=CONFIG['OPENAI_KEY']
+            )
+            st.session_state['vectorstore'] = vectorstore
+            st.session_state['memory'] = ConversationBufferWindowMemory(k=20)
             
         context = st.text_input('Вы можете задать свой контекст')
-        if len(context):
-            context = context+'\n'
-        else:
-            context = DEFAULT_CONTEXT
         update_user_context(conn=connection, 
                             login=st.session_state['login'],
                             new_context=context)

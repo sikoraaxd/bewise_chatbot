@@ -1,7 +1,9 @@
 .env
 __pycache__/
+data/
 site_chatbot/__pycache__/
 telegram_chatbot/__pycache__/
 utils/__pycache__/
 processes/
 site_chatbot/future.py
+venv/

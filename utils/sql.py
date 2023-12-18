@@ -1,180 +1,144 @@
-import base64
 import json
-import sqlite3
-from sqlite3 import Error
-import base64
+import psycopg2
+from psycopg2 import Error
 
-def create_connection(db_file):
+def create_connection():
+    """Создает и возвращает соединение с базой данных PostgreSQL."""
     conn = None
     try:
-        conn = sqlite3.connect(db_file, check_same_thread=False)
+        conn = psycopg2.connect(
+            host="localhost",
+            port="5432",
+            database="chatbot_db",
+            user="chatbot_worker",
+            password="password")
         return conn
     except Error as e:
         print(e)
-
     return conn
 
-
 def create_tables(conn):
+    """Создает таблицы в базе данных."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS Users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
                 login TEXT NOT NULL,
-                context TEXT,
-                documents TEXT
-            )
+                context TEXT
+            );
         ''')
 
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS MessageHistory (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS messagehistory (
+                id SERIAL PRIMARY KEY,
                 user_id INTEGER,
                 message TEXT,
-                FOREIGN KEY (user_id) REFERENCES Users (id)
-            )
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
         ''')
-
         conn.commit()
     except Error as e:
         print(e)
 
-
 def check_user_existence(conn, login):
+    """Проверяет существование пользователя по логину."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT EXISTS (
                 SELECT 1
-                FROM Users
-                WHERE login = ?
+                FROM users
+                WHERE login = %s
             )
         ''', (login,))
-
         result = cursor.fetchone()
-        return result[0] == 1
-
+        return result[0]
     except Error as e:
         print(e)
         return False
 
-
-def insert_user(conn, login, context, documents):
+def insert_user(conn, login, context):
+    """Вставляет пользователя в таблицу users."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO Users (login, context, documents)
-            VALUES (?, ?, ?)
-        ''', (login, context, documents))
+            INSERT INTO users (login, context)
+            VALUES (%s, %s)
+        ''', (login, context))
         conn.commit()
     except Error as e:
         print(e)
 
-
-def get_user_documents(conn, login):
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT Users.documents
-            FROM Users
-            WHERE login = ?
-        ''', (login,))
-
-        result = cursor.fetchone()
-        if result:
-            documents = json.loads(result[0])
-            return documents
-        else:
-            return []
-    except Error as e:
-        print(e)
-        return None
-
-
 def get_user_context(conn, login):
+    """Возвращает контекст пользователя."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT Users.context
-            FROM Users
-            WHERE login = ?
+            SELECT context
+            FROM users
+            WHERE login = %s
         ''', (login,))
-
         result = cursor.fetchone()
         return result
     except Error as e:
         print(e)
         return None
 
-
-def update_user_documents(conn, login, new_documents):
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE Users
-            SET documents = ?
-            WHERE login = ?
-        ''', (new_documents, login))
-        conn.commit()
-    except Error as e:
-        print(e)
-
-
 def update_user_context(conn, login, new_context):
+    """Обновляет контекст пользователя."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            UPDATE Users
-            SET context = ?
-            WHERE login = ?
+            UPDATE users
+            SET context = %s
+            WHERE login = %s
         ''', (new_context, login))
         conn.commit()
     except Error as e:
         print(e)
 
-
 def insert_message(conn, login, message):
+    """Вставляет сообщение в таблицу messagehistory."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT id FROM Users WHERE login = ?
+            SELECT id FROM users WHERE login = %s
         ''', (login,))
-
         user_id = cursor.fetchone()
 
         if user_id is not None:
             user_id = user_id[0]
             cursor.execute('''
-                INSERT INTO MessageHistory (user_id, message)
-                VALUES (?, ?)
+                INSERT INTO messagehistory (user_id, message)
+                VALUES (%s, %s)
             ''', (user_id, message))
         conn.commit()
     except Error as e:
         print(e)
 
-
 def get_message_history(conn, login):
-    try:        
+    """Возвращает историю сообщений пользователя."""
+    try:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT MessageHistory.message
-            FROM MessageHistory
-            JOIN Users ON Users.id = MessageHistory.user_id
-            WHERE Users.login = ?
+            SELECT message
+            FROM messagehistory
+            JOIN users ON users.id = messagehistory.user_id
+            WHERE users.login = %s
         ''', (login,))
 
         rows = cursor.fetchall()
         return rows
     except Error as e:
-        raise e
-
+        print(e)
 
 def clear_messages(conn, login):
+    """Очищает историю сообщений пользователя."""
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT id FROM Users WHERE login = ?
+            SELECT id FROM users WHERE login = %s
         ''', (login,))
 
         user_id = cursor.fetchone()
@@ -182,7 +146,7 @@ def clear_messages(conn, login):
         if user_id is not None:
             user_id = user_id[0]
             cursor.execute('''
-                DELETE FROM MessageHistory WHERE MessageHistory.user_id = ?
+                DELETE FROM messagehistory WHERE user_id = %s
             ''', (user_id,))
         conn.commit()
     except Error as e:

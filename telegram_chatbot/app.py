@@ -6,7 +6,26 @@ sys.path.insert(1, os.path.join(current_directory_path, 'utils/'))
 import openai
 import telebot
 from telebot import types
-from preprocessor import get_index, roles_cleaner
+
+from preprocessor import (
+    load_documents,
+    get_vectorstore,
+    retrieve,
+    roles_cleaner, 
+    save_files,
+    clear_files
+)
+
+from sql import (
+    check_user_existence,
+    create_connection,
+    get_message_history,
+    get_user_context,
+    insert_message,
+    insert_user,
+    update_user_context,
+    clear_messages
+)
 
 import io
 from dotenv import dotenv_values
@@ -15,13 +34,13 @@ import socks
 import socket
 
 
-config = dotenv_values(os.path.join(current_directory_path,'.env'))
-TELEBOT_TOKEN = config['TELEBOT_TOKEN']
-OPENAI_KEY = config['OPENAI_KEY']
+CONFIG = dotenv_values(os.path.join(current_directory_path,'.env'))
+TELEBOT_TOKEN = CONFIG['TELEBOT_TOKEN']
+OPENAI_KEY = CONFIG['OPENAI_KEY']
 bot=telebot.TeleBot(TELEBOT_TOKEN)
-DEFAULT_CONTEXT = config['DEFAULT_CONTEXT']
+DEFAULT_CONTEXT = CONFIG['DEFAULT_CONTEXT']
 
-socks.set_default_proxy(socks.SOCKS5, config['SOCKS5_IP'], int(config['SOCKS5_PORT']), username=config['SOCKS5_USERNAME'], password=config['SOCKS5_PASSWORD'])
+socks.set_default_proxy(socks.SOCKS5, CONFIG['SOCKS5_IP'], int(CONFIG['SOCKS5_PORT']), username=CONFIG['SOCKS5_USERNAME'], password=CONFIG['SOCKS5_PASSWORD'])
 socket.socket = socks.socksocket
 
 

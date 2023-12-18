@@ -1,126 +1,110 @@
-import io
-from PyPDF2 import PdfReader
-from docx import Document as docx_doc
-from base64 import b64decode, b64encode
-import json
+import os
 import re
+import tabula
+import pandas as pd
+from docx import Document as doc
 
-from langchain.docstore.document import Document
 from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.document_loaders.unstructured import UnstructuredFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
-
-from sql import get_user_documents, update_user_documents
-
-
-def clear_text(text):
-    text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", text)
-    text = re.sub(r"(?<!\n\s)\n(?!\s\n)", " ", text.strip())
-    text = re.sub(r"\n\s*\n", "\n\n", text)
-    return text
+from langchain.vectorstores import FAISS
+from langchain.docstore.document import Document
 
 
-def preprocess_pdf(file):
-    pdf = PdfReader(file)
-    output = []
-    for page in pdf.pages:
-        text = page.extract_text()
-        text = clear_text(text)
-        output.append(text)
-    return output
+def save_files(files, data_path):
+    for file in files:
+        with open(os.path.join(data_path,file.name), 'wb') as f:
+            f.write(file.read())
 
 
-def preprocess_doc(file):
-    doc = docx_doc(file)
-    output = []
-    for paragraph in doc.paragraphs:
-        text = clear_text(paragraph.text)
-        if len(text):
-            output.append(text)
-
-    for table in doc.tables:
-        table_text = ''
-        for row in table.rows:
-            row_text = ''
-            for cell in row.cells:
-                text = clear_text(cell.text)
-                if len(text):
-                    row_text += text + ' '
-            table_text += row_text + '\n'
-        output.append(table_text)
-    return output
+def clear_files(data_path):
+    for file in os.listdir(data_path):
+        os.remove(os.path.join(data_path, file))
 
 
-def text_to_docs(text):
-    if isinstance(text, str):
-        text = [text]
-
-    page_docs = [Document(page_content=page) for page in text]
-    for i, doc in enumerate(page_docs):
-        doc.metadata["page"] = i + 1
-
-    doc_chunks = []
-    for doc in page_docs:
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=4000,
-            separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
-            chunk_overlap=0.1,
-            length_function=len,
-        )
-        chunks = text_splitter.split_text(doc.page_content)
-        for i, chunk in enumerate(chunks):
-            doc = Document(
-                page_content=chunk, metadata={"page": doc.metadata["page"], "chunk": i}
+def parse_tables(filepath):
+  extention = filepath.split('.')[-1]
+  all_tables = []
+  if extention == 'pdf':
+      tables = tabula.read_pdf(filepath, pages='all')
+      if len(tables):
+        for table in tables:
+          print(table.to_csv(index=False))
+          all_tables.append(
+              Document(
+                  page_content=table.to_csv(index=False)
+              )
+          )
+  elif extention in ['doc', 'docx']:
+    document = doc(filepath)
+    tables = []
+    for table in document.tables:
+        df = [['' for i in range(len(table.columns))] for j in range(len(table.rows))]
+        for i, row in enumerate(table.rows):
+            for j, cell in enumerate(row.cells):
+                if cell.text:
+                    df[i][j] = cell.text
+        tables.append(pd.DataFrame(df))
+    if len(tables):
+      for table in tables:
+        all_tables.append(
+            Document(
+                page_content=table.to_csv(index=False)
             )
-            doc.metadata["source"] = f"{doc.metadata['page']}-{doc.metadata['chunk']}"
-            doc_chunks.append(doc)
-    return doc_chunks
+        )
+  return all_tables
 
 
-def docs_to_index(docs, openai_api_key):
-    index = Chroma.from_documents(docs, OpenAIEmbeddings(openai_api_key=openai_api_key))
-    return index
-
-
-preprocess_functions = {
-    'pdf': preprocess_pdf,
-    'doc': preprocess_doc,
-    'docx': preprocess_doc
-}
-
-
-def get_index(files, login, connection, openai_api_key, from_stored_data=False):
+def parse_documents(data_path):
     documents = []
-    if from_stored_data:
-        stored_documents = get_user_documents(conn=connection, 
-                                              login=login)
-        if len(stored_documents) == 0:
-            return None
-        for elem in stored_documents:
-            file_extension = elem['extension']
-            _bytes = b64decode(elem['b64data'].encode('utf-8'))
-            text = preprocess_functions[file_extension](io.BytesIO(_bytes))
-            documents = documents + text_to_docs(text)
-    else:
-        stored_documents = []
-        for file in files:
-            file_extension = file.name.split('.')[-1].lower()
-            if file_extension in preprocess_functions:
-                _bytes = file.read()
-                stored_documents.append({
-                    'extension': file_extension,
-                    'b64data': b64encode(_bytes).decode("utf-8")
-                })
-                text = preprocess_functions[file_extension](io.BytesIO(_bytes))
-            else:
-                return None
-            documents = documents + text_to_docs(text)
-        stored_data = json.dumps(stored_documents)
-        update_user_documents(conn=connection, 
-                            login=login,
-                            new_documents=stored_data)
-    index = docs_to_index(documents, openai_api_key)
-    return index
+    for elem in os.listdir(data_path):
+        try:
+            elem_path = os.path.join(data_path, elem)
+            parser = UnstructuredFileLoader(elem_path)
+            data = parser.load()
+            documents += data
+            tables = parse_tables(elem_path)
+            documents += tables
+        except:
+            pass
+    return documents
+
+
+def load_documents(data_path):
+    documents = parse_documents(data_path)
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        encoding_name="cl100k_base",
+        chunk_size = 1000,
+        chunk_overlap = 500,
+    )
+    documents = splitter.split_documents(documents)
+    return documents
+
+
+def get_vectorstore(documents, openai_api_key):
+    vectorstore = FAISS.from_documents(
+        documents, embedding=OpenAIEmbeddings(openai_api_key=openai_api_key)
+    )
+    return vectorstore
+
+
+def retrieve(query, vectorstore, memory, context, top_k=5):
+    retrieved = []
+    if vectorstore is not None:
+        retrieved = vectorstore.similarity_search(query, k=top_k)
+    info_doc = Document(
+            page_content="""Используй github markdown по возможности.\nЭти данные тебе дала система: {}\n Дальше идёт основной источник информации\n\n""".
+            format(context)
+    )
+    retrieved = [info_doc, *retrieved]
+    if len(memory.buffer_as_messages):
+        memory_doc = Document(
+            page_content="Дальше следует история диалога:\n{}\n\n".
+            format(memory.buffer_as_str)
+        )
+        retrieved.append(memory_doc)
+    print(retrieved[1].page_content)
+    return retrieved
 
 
 def roles_cleaner(text):
@@ -131,3 +115,17 @@ def roles_cleaner(text):
         return match.group(1)
     else:
         return text
+
+
+def convert_history_to_memory(history, memory, k=20):
+    history = history[-k:]
+    i = 0
+    while i < len(history)-1:
+        if i == 0 and history[i]['role'] == 'assistant':
+            i += 1
+        _input = history[i]['text']
+        _output = history[i+1]['text']
+        memory.save_context({'input': _input}, {'output': _output})
+        i += 2
+    return memory
+        
